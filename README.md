@@ -19,8 +19,8 @@ No API key required — these are CoinGecko's free public endpoints.
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
 
 ```bash
-git clone https://github.com/<your-username>/mcp-crypto-server.git
-cd mcp-crypto-server
+git clone https://github.com/nirzareee/MCP-CryptoServer.git
+cd MCP-CryptoServer.
 uv sync
 ```
 
