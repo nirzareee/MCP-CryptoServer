@@ -10,6 +10,13 @@ The client is created here rather than passed into each tool because a tool's
 parameters are its public interface: MCP turns the signature into the schema
 the model sees. A `client` argument would appear as something the model is
 expected to supply, which it cannot.
+
+The watchlist is exposed as a resource rather than a tool. The distinction is
+who initiates: tools are called by the model when it decides it needs them,
+resources are read by the client and attached to context. "What am I
+tracking" is context the model should already have, not a question it should
+have to think to ask. Changing the watchlist stays a tool, because that is an
+action taken on purpose.
 """
 
 from mcp.server.fastmcp import FastMCP
@@ -17,10 +24,12 @@ from mcp.server.fastmcp import FastMCP
 import analytics
 import timeseries
 from coingecko import CoinGeckoClient, CoinGeckoError
+from watchlist import Watchlist, WatchlistError
 
 mcp = FastMCP("crypto_price_tracker")
 
 client = CoinGeckoClient()
+watchlist = Watchlist()
 
 
 @mcp.tool()
@@ -174,6 +183,104 @@ async def search_coin(query: str) -> str:
 
     lines = [f"{c['name']} ({c['symbol'].upper()}) -> id: {c['id']}" for c in coins[:8]]
     return "Matches:\n" + "\n".join(lines)
+
+
+@mcp.resource("crypto://watchlist")
+async def watchlist_resource() -> str:
+    """The user's tracked coins, with current prices.
+
+    Read by the client rather than called by the model, so the model starts a
+    conversation already knowing what is being tracked.
+    """
+    coins = watchlist.load()
+
+    if not coins:
+        return (
+            "The watchlist is empty. Coins can be added with the add_to_watchlist tool."
+        )
+
+    try:
+        fetched = await client.simple_price(coins)
+    except CoinGeckoError as exc:
+        return f"Watching: {', '.join(coins)}\n(Prices unavailable: {exc})"
+
+    lines = ["Watchlist"]
+    for coin_id in coins:
+        entry = fetched.data.get(coin_id)
+        price = entry.get("usd") if entry else None
+
+        if price is None:
+            lines.append(f"  {coin_id}: no price available")
+            continue
+
+        line = f"  {coin_id}: {price:,.2f} USD"
+        change = entry.get("usd_24h_change")
+        if change is not None:
+            line += f" ({change:+.2f}% 24h)"
+        lines.append(line)
+
+    note = fetched.staleness_note()
+    if note:
+        lines.append(note)
+
+    return "\n".join(lines)
+
+
+@mcp.resource("crypto://coin/{coin_id}")
+async def coin_resource(coin_id: str) -> str:
+    """Market data for a single coin, addressable by URI.
+
+    A resource template: the client can read `crypto://coin/bitcoin` directly
+    without the model having to decide to call a tool first.
+    """
+    try:
+        fetched = await client.simple_price([coin_id])
+    except CoinGeckoError as exc:
+        return f"Could not fetch {coin_id}: {exc}"
+
+    entry = fetched.data.get(coin_id)
+    if not entry or entry.get("usd") is None:
+        return f"No data for '{coin_id}'."
+
+    line = f"{coin_id}: {entry['usd']:,.2f} USD"
+    change = entry.get("usd_24h_change")
+    if change is not None:
+        line += f" ({change:+.2f}% over 24h)"
+    return line
+
+
+@mcp.tool()
+async def add_to_watchlist(coin_id: str) -> str:
+    """Add a coin to the tracked watchlist.
+
+    Args:
+        coin_id: CoinGecko coin id, e.g. "bitcoin". Use search_coin first if
+            unsure; an id that does not exist will be stored but will show no
+            price.
+    """
+    try:
+        coins = watchlist.add(coin_id)
+    except WatchlistError as exc:
+        return str(exc)
+
+    return f"Watching {coin_id}. Now tracking {len(coins)}: {', '.join(coins)}"
+
+
+@mcp.tool()
+async def remove_from_watchlist(coin_id: str) -> str:
+    """Remove a coin from the tracked watchlist.
+
+    Args:
+        coin_id: CoinGecko coin id to stop tracking.
+    """
+    try:
+        coins = watchlist.remove(coin_id)
+    except WatchlistError as exc:
+        return str(exc)
+
+    if not coins:
+        return f"Removed {coin_id}. The watchlist is now empty."
+    return f"Removed {coin_id}. Still tracking: {', '.join(coins)}"
 
 
 if __name__ == "__main__":
