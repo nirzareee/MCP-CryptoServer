@@ -9,6 +9,7 @@ from mcp.server.fastmcp import FastMCP
 
 import analytics
 import coingecko
+import timeseries
 from coingecko import CoinGeckoError
 
 mcp = FastMCP("crypto_price_tracker")
@@ -100,6 +101,73 @@ async def search_coin(query: str) -> str:
 
     lines = [f"{c['name']} ({c['symbol'].upper()}) -> id: {c['id']}" for c in coins[:8]]
     return "Matches:\n" + "\n".join(lines)
+
+
+@mcp.tool()
+async def compare_coins(
+    coin_a: str,
+    coin_b: str,
+    days: int = 90,
+    currency: str = "usd",
+) -> str:
+    """Compare how two cryptocurrencies have moved relative to each other.
+
+    Reports the correlation of their daily returns over the period, plus each
+    coin's return, annualised volatility, and worst peak-to-trough decline.
+    Useful for questions about diversification: two coins that move together
+    offer less of it than holding one.
+
+    Args:
+        coin_a: CoinGecko coin id, e.g. "bitcoin".
+        coin_b: CoinGecko coin id, e.g. "ethereum".
+        days: Length of history to analyse, 2 to 365. Defaults to 90.
+        currency: Currency to price both coins in.
+    """
+    if coin_a == coin_b:
+        return "Pick two different coins; a coin is perfectly correlated with itself."
+
+    if not 2 <= days <= 365:
+        return "The `days` argument must be between 2 and 365."
+
+    try:
+        chart_a = await coingecko.market_chart(coin_a, days, currency)
+        chart_b = await coingecko.market_chart(coin_b, days, currency)
+    except CoinGeckoError as exc:
+        return str(exc)
+
+    closes_a = timeseries.to_daily_closes(chart_a.data.get("prices", []))
+    closes_b = timeseries.to_daily_closes(chart_b.data.get("prices", []))
+
+    if not closes_a:
+        return f"No price history returned for '{coin_a}'. Check the coin id."
+    if not closes_b:
+        return f"No price history returned for '{coin_b}'. Check the coin id."
+
+    shared_days, prices_a, prices_b = timeseries.align(closes_a, closes_b)
+
+    if len(shared_days) < 2:
+        return (
+            f"{coin_a} and {coin_b} have too little overlapping history "
+            f"({len(shared_days)} shared days) to compare."
+        )
+
+    coefficient = timeseries.pearson_correlation(
+        timeseries.daily_returns(prices_a),
+        timeseries.daily_returns(prices_b),
+    )
+
+    stats_a = timeseries.summarise_series(coin_a, closes_a)
+    stats_b = timeseries.summarise_series(coin_b, closes_b)
+
+    if stats_a is None or stats_b is None:
+        return "Not enough price history to summarise both coins."
+
+    output = timeseries.format_comparison(
+        stats_a, stats_b, coefficient, len(shared_days)
+    )
+
+    note = chart_a.staleness_note() or chart_b.staleness_note()
+    return f"{output}\n\n{note}" if note else output
 
 
 if __name__ == "__main__":
