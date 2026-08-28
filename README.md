@@ -6,8 +6,8 @@ built as a reference implementation for production-quality MCP tool design.
 
 **Python 3.11+ · asyncio · httpx · pytest · mypy · ruff · GitHub Actions**
 
-- **4 tools** exposed to any MCP client, including Claude Desktop
-- **134 tests** at 97% coverage, running in under a second
+- **6 tools and 2 resources** exposed to any MCP client, including Claude Desktop
+- **167 tests** at 97% coverage, running in under a second
 - **CI on every push** — lint, format, type check, and tests across two Python
   versions
 - **Statistical analysis** — return correlation, annualised volatility, and
@@ -36,6 +36,7 @@ coingecko.py     all network access, plus caching
 analytics.py     portfolio valuation (pure)
 timeseries.py    price-series statistics (pure)
 cache.py         TTL cache (pure)
+watchlist.py     persisted watchlist (JSON, atomic writes)
 ```
 
 `analytics`, `timeseries`, and `cache` import nothing beyond the standard
@@ -139,7 +140,7 @@ uv sync
 ## Testing
 
 ```bash
-uv run pytest              # 134 tests, 97% coverage
+uv run pytest              # 167 tests, 97% coverage
 uv run pytest --cov        # with coverage
 ```
 
@@ -205,9 +206,6 @@ uv run mcp dev mcp_server.py
 
 ## Roadmap
 
-- **An MCP resource** exposing a watchlist. Resources are read directly by the
-  client rather than called as functions; this server currently uses one of
-  MCP's three primitives.
 - **Rate-limit backoff.** The cache reduces call volume but does not retry; a
   429 with a `Retry-After` header is currently surfaced as an error message.
 
