@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main, portfolio-tracker]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the floor this project targets; 3.12 catches anything that
+        # only works on the older interpreter.
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        # --frozen fails if uv.lock is out of date with pyproject.toml,
+        # so a forgotten `uv lock` is caught here rather than by the next
+        # person to clone the repo.
+        run: uv sync --all-extras --dev --frozen
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy .
+
+      - name: Run tests
+        run: uv run pytest --cov --cov-report=term-missing
