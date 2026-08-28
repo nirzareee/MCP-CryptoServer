@@ -40,15 +40,17 @@ class Portfolio:
         change are excluded from both the numerator and the denominator, so
         the figure describes only the part of the portfolio it can see.
         """
-        priced = [p for p in self.positions if p.change_24h is not None]
+        priced = [
+            (p.value, p.change_24h) for p in self.positions if p.change_24h is not None
+        ]
         if not priced:
             return None
 
-        covered = sum(p.value for p in priced)
+        covered = sum(value for value, _ in priced)
         if covered == 0:
             return None
 
-        return sum(p.value * p.change_24h for p in priced) / covered
+        return sum(value * change for value, change in priced) / covered
 
 
 def value_portfolio(
@@ -73,7 +75,12 @@ def value_portfolio(
 
     for coin_id, quantity in holdings.items():
         entry = prices.get(coin_id)
-        price = entry.get(currency) if entry else None
+        if entry is None or entry.get(currency) is None:
+            unpriced.append(coin_id)
+            continue
+
+        price = entry[currency]
+        value = price * quantity
 
         if price is None:
             unpriced.append(coin_id)

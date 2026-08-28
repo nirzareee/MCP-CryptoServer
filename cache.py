@@ -16,8 +16,9 @@ The clock is injected so tests can advance time without sleeping.
 """
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 
 @dataclass(frozen=True)

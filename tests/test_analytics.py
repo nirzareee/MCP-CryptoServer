@@ -5,6 +5,8 @@ up by writing a literal. Nothing is patched, nothing is stubbed, and the whole
 file runs in milliseconds.
 """
 
+from typing import Any
+
 import pytest
 
 from analytics import Portfolio, Position, format_portfolio, value_portfolio
@@ -80,7 +82,8 @@ class TestUnpricedCoins:
 
     def test_null_price_counts_as_unpriced(self) -> None:
         """CoinGecko can return a coin with no value in the requested currency."""
-        result = value_portfolio({"obscure": 1.0}, {"obscure": {"usd": None}})
+        malformed: Any = {"obscure": {"usd": None}}
+        result = value_portfolio({"obscure": 1.0}, malformed)
         assert result.unpriced == ["obscure"]
         assert result.positions == []
 
@@ -167,5 +170,7 @@ class TestFormatting:
         assert format_portfolio(value_portfolio({}, {})) == "No holdings provided."
 
     def test_currency_label_follows_argument(self) -> None:
-        result = value_portfolio({"bitcoin": 1.0}, {"bitcoin": {"eur": 45_000.0}}, "eur")
+        result = value_portfolio(
+            {"bitcoin": 1.0}, {"bitcoin": {"eur": 45_000.0}}, "eur"
+        )
         assert "EUR" in format_portfolio(result, "eur")

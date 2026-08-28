@@ -34,8 +34,7 @@ async def get_crypto_price(
     entry = fetched.data.get(crypto_id)
     if not entry or entry.get(currency) is None:
         return (
-            f"No price found for '{crypto_id}'. "
-            f"Use search_coin to find the correct id."
+            f"No price found for '{crypto_id}'. Use search_coin to find the correct id."
         )
 
     price = entry[currency]
@@ -99,9 +98,7 @@ async def search_coin(query: str) -> str:
     if not coins:
         return f"No coins matched '{query}'."
 
-    lines = [
-        f"{c['name']} ({c['symbol'].upper()}) -> id: {c['id']}" for c in coins[:8]
-    ]
+    lines = [f"{c['name']} ({c['symbol'].upper()}) -> id: {c['id']}" for c in coins[:8]]
     return "Matches:\n" + "\n".join(lines)
 
 

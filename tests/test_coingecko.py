@@ -9,6 +9,8 @@ global is a real design tradeoff: it keeps the client's call sites simple, at
 the cost of test isolation that has to be managed by hand.
 """
 
+from collections.abc import Generator
+
 import httpx
 import pytest
 import respx
@@ -20,7 +22,7 @@ SEARCH_URL = f"{coingecko.BASE_URL}/search"
 
 
 @pytest.fixture(autouse=True)
-def clear_cache():
+def clear_cache() -> Generator[None, None, None]:
     """Reset the module-level cache around every test."""
     coingecko._cache.clear()
     yield

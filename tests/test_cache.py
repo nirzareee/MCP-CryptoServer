@@ -62,9 +62,7 @@ class TestBasicStorage:
 
 
 class TestExpiry:
-    def test_value_survives_within_ttl(
-        self, cache: TTLCache, clock: FakeClock
-    ) -> None:
+    def test_value_survives_within_ttl(self, cache: TTLCache, clock: FakeClock) -> None:
         cache.set("k", "v")
         clock.advance(59.0)
         assert cache.get("k") == "v"
