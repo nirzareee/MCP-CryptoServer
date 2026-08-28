@@ -7,7 +7,7 @@ built as a reference implementation for production-quality MCP tool design.
 **Python 3.11+ · asyncio · httpx · pytest · mypy · ruff · GitHub Actions**
 
 - **4 tools** exposed to any MCP client, including Claude Desktop
-- **129 tests** at 97% coverage, running in under a second
+- **134 tests** at 97% coverage, running in under a second
 - **CI on every push** — lint, format, type check, and tests across two Python
   versions
 - **Statistical analysis** — return correlation, annualised volatility, and
@@ -139,7 +139,7 @@ uv sync
 ## Testing
 
 ```bash
-uv run pytest              # 129 tests, 97% coverage
+uv run pytest              # 134 tests, 97% coverage
 uv run pytest --cov        # with coverage
 ```
 
@@ -205,8 +205,6 @@ uv run mcp dev mcp_server.py
 
 ## Roadmap
 
-- **`CoinGeckoClient` as a class**, replacing the module-level cache singleton
-  with instance-owned state.
 - **An MCP resource** exposing a watchlist. Resources are read directly by the
   client rather than called as functions; this server currently uses one of
   MCP's three primitives.
