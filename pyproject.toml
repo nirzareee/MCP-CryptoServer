@@ -1,7 +1,7 @@
 [project]
 name = "mcp-crypto-server"
 version = "0.1.0"
-description = "Add your description here"
+description = "An MCP server that gives Claude access to live cryptocurrency market data. Built with the MCP Python SDK and the public CoinGecko API."
 readme = "README.md"
 authors = [
     { name = "Nirzaree Devasthale", email = "nirzareenikhil.devasthale@stonybrook.edu" }
@@ -19,3 +19,17 @@ mcp-crypto-server = "mcp_crypto_server:main"
 [build-system]
 requires = ["uv_build>=0.12.7,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "respx>=0.23.1",
+]
+
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-v --strict-markers"
