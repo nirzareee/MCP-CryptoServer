@@ -1,153 +1,95 @@
+"""MCP server exposing cryptocurrency market data tools.
+
+This module holds tool definitions only. Network access lives in `coingecko`
+and computation lives in `analytics`, so the tools here are thin: fetch,
+compute, format, and turn failures into something a model can read.
 """
-This script demonstrates how to create a simple MCP server that fetches
-the current price of a cryptocurrency using the CoinGecko API.
-It uses the FastMCP library to create the server and handle requests.
-"""
-import httpx
-from dotenv import load_dotenv
+
 from mcp.server.fastmcp import FastMCP
 
-load_dotenv()
+import analytics
+import coingecko
+from coingecko import CoinGeckoError
 
-COINGECKO_BASE_URL = "https://api.coingecko.com/api/v3"
-
-# Create our MCP server with a descriptive name
 mcp = FastMCP("crypto_price_tracker")
-async def _get(endpoint: str, params: dict) -> dict | None:
-    """Shared helper for CoinGecko GET requests. Returns None on failure."""
-    headers = {"User-Agent": "mcp-crypto-server/0.1", "Accept": "application/json"}
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(
-                f"{COINGECKO_BASE_URL}{endpoint}",
-                params=params,
-                headers=headers,
-                timeout=30.0,
-            )
-            response.raise_for_status()
-            return response.json()
-        except Exception:
-            return None
 
-# Now let's define our first tool - getting the current price of a cryptocurrency
+
 @mcp.tool()
 async def get_crypto_price(crypto_id: str, currency: str = "usd") -> str:
-    """
-    Get the current price of a cryptocurrency in a specified currency.
-    
-    Parameters:
-    - crypto_id: The ID of the cryptocurrency (e.g., 'bitcoin', 'ethereum')
-    - currency: The currency to display the price in (default: 'usd')
-    
-    Returns:
-    - Current price information as a formatted string
-    """
-    # Construct the API URL
-    url = f"{COINGECKO_BASE_URL}/simple/price"
-    
-    # Set up the query parameters
-    params = {
-        "ids": crypto_id,
-        "vs_currencies": currency
-    }
-    
-    try:
-        # Make the API call
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, params=params)
-            response.raise_for_status()  # Raise an exception for HTTP errors
-            
-            # Parse the response
-            data = response.json()
-            
-            # Check if we got data for the requested crypto
-            if crypto_id not in data:
-                return f"Cryptocurrency '{crypto_id}' not found. Please check the ID and try again."
-            
-            # Format and return the price information
-            price = data[crypto_id][currency]
-            return f"The current price of {crypto_id} is {price} {currency.upper()}"
-            
-    except httpx.HTTPStatusError as e:
-        return f"API Error: {e.response.status_code} - {e.response.text}"
-    except Exception as e:
-        return f"Error fetching price data: {str(e)}"
+    """Get the current price of a cryptocurrency.
 
-# You can add more tools here, following the same pattern as above
+    Args:
+        crypto_id: CoinGecko coin id, e.g. "bitcoin", "ethereum".
+        currency: Currency code to price in, e.g. "usd", "eur", "inr".
+    """
+    try:
+        data = await coingecko.simple_price([crypto_id], currency)
+    except CoinGeckoError as exc:
+        return str(exc)
+
+    entry = data.get(crypto_id)
+    if not entry or entry.get(currency) is None:
+        return (
+            f"No price found for '{crypto_id}'. "
+            f"Use search_coin to find the correct id."
+        )
+
+    price = entry[currency]
+    change = entry.get(f"{currency}_24h_change")
+
+    result = f"{crypto_id} is {price:,.2f} {currency.upper()}"
+    if change is not None:
+        result += f" ({change:+.2f}% over 24h)"
+    return result
+
+
 @mcp.tool()
 async def get_portfolio(holdings: dict[str, float], currency: str = "usd") -> str:
     """Value a portfolio of cryptocurrency holdings.
 
+    All coins are priced in a single API request. Coins that cannot be priced
+    are reported separately rather than being dropped from the total.
+
     Args:
-        holdings: Map of CoinGecko coin id to quantity held,
-            e.g. {"bitcoin": 0.5, "ethereum": 3}. Use search_coin
-            first if you are unsure of an id.
-        currency: Fiat currency to value the portfolio in, e.g. "usd".
+        holdings: Coin id to quantity held, e.g. {"bitcoin": 0.5, "ethereum": 3}.
+            Use search_coin first if you are unsure of an id.
+        currency: Currency to value the portfolio in, e.g. "usd".
     """
     if not holdings:
         return "No holdings provided."
 
-    data = await _get(
-        "/simple/price",
-        {
-            "ids": ",".join(holdings),
-            "vs_currencies": currency,
-            "include_24hr_change": "true",
-        },
-    )
+    try:
+        prices = await coingecko.simple_price(list(holdings), currency)
+    except CoinGeckoError as exc:
+        return str(exc)
 
-    if data is None:
-        return "Could not reach the price API."
+    portfolio = analytics.value_portfolio(holdings, prices, currency)
+    return analytics.format_portfolio(portfolio, currency)
 
-    unit = currency.upper()
-    positions = []
-    unpriced = []
-    total = 0.0
 
-    for coin_id, quantity in holdings.items():
-        entry = data.get(coin_id)
-        price = entry.get(currency) if entry else None
+@mcp.tool()
+async def search_coin(query: str) -> str:
+    """Find a cryptocurrency's CoinGecko id by name or ticker symbol.
 
-        if price is None:
-            unpriced.append(coin_id)
-            continue
+    Use this when unsure of the exact id another tool needs.
 
-        value = price * quantity
-        total += value
-        positions.append(
-            {
-                "id": coin_id,
-                "quantity": quantity,
-                "price": price,
-                "value": value,
-                "change": entry.get(f"{currency}_24h_change"),
-            }
-        )
+    Args:
+        query: Partial name or ticker, e.g. "btc", "doge", "chainlink".
+    """
+    try:
+        data = await coingecko.search(query)
+    except CoinGeckoError as exc:
+        return str(exc)
 
-    if not positions:
-        return f"None of the requested coins could be priced: {', '.join(unpriced)}"
+    coins = data.get("coins", [])
+    if not coins:
+        return f"No coins matched '{query}'."
 
-    positions.sort(key=lambda p: p["value"], reverse=True)
+    lines = [
+        f"{c['name']} ({c['symbol'].upper()}) -> id: {c['id']}" for c in coins[:8]
+    ]
+    return "Matches:\n" + "\n".join(lines)
 
-    lines = [f"Portfolio value: {total:,.2f} {unit}", ""]
-    for p in positions:
-        weight = p["value"] / total * 100
-        line = (
-            f"{p['id']}: {p['quantity']:g} @ {p['price']:,.2f} "
-            f"= {p['value']:,.2f} {unit} ({weight:.1f}%)"
-        )
-        if p["change"] is not None:
-            line += f" {p['change']:+.2f}% 24h"
-        lines.append(line)
 
-    if unpriced:
-        lines.append("")
-        lines.append(
-            f"Not priced, excluded from the total: {', '.join(unpriced)}"
-        )
-
-    return "\n".join(lines)
-# Run the MCP server
-# This will start the server and listen for incoming requests
 if __name__ == "__main__":
     mcp.run()
