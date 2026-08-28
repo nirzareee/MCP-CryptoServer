@@ -1,18 +1,26 @@
 """MCP server exposing cryptocurrency market data tools.
 
-This module holds tool definitions only. Network access and caching live in
-`coingecko`, computation lives in `analytics`, so the tools here are thin:
-fetch, compute, format, and turn failures into something a model can read.
+This module is the composition root: it creates the one CoinGecko client the
+tools share, and holds the tool definitions themselves. Network access and
+caching live in `coingecko`; computation lives in `analytics` and
+`timeseries`. The tools here are thin — fetch, compute, format, and turn
+failures into something a model can read.
+
+The client is created here rather than passed into each tool because a tool's
+parameters are its public interface: MCP turns the signature into the schema
+the model sees. A `client` argument would appear as something the model is
+expected to supply, which it cannot.
 """
 
 from mcp.server.fastmcp import FastMCP
 
 import analytics
-import coingecko
 import timeseries
-from coingecko import CoinGeckoError
+from coingecko import CoinGeckoClient, CoinGeckoError
 
 mcp = FastMCP("crypto_price_tracker")
+
+client = CoinGeckoClient()
 
 
 @mcp.tool()
@@ -28,7 +36,7 @@ async def get_crypto_price(
             when the user asks to check again or wants the very latest figure.
     """
     try:
-        fetched = await coingecko.simple_price([crypto_id], currency, refresh=refresh)
+        fetched = await client.simple_price([crypto_id], currency, refresh=refresh)
     except CoinGeckoError as exc:
         return str(exc)
 
@@ -68,9 +76,7 @@ async def get_portfolio(
         return "No holdings provided."
 
     try:
-        fetched = await coingecko.simple_price(
-            list(holdings), currency, refresh=refresh
-        )
+        fetched = await client.simple_price(list(holdings), currency, refresh=refresh)
     except CoinGeckoError as exc:
         return str(exc)
 
@@ -79,28 +85,6 @@ async def get_portfolio(
 
     note = fetched.staleness_note()
     return f"{output}\n\n{note}" if note else output
-
-
-@mcp.tool()
-async def search_coin(query: str) -> str:
-    """Find a cryptocurrency's CoinGecko id by name or ticker symbol.
-
-    Use this when unsure of the exact id another tool needs.
-
-    Args:
-        query: Partial name or ticker, e.g. "btc", "doge", "chainlink".
-    """
-    try:
-        fetched = await coingecko.search(query)
-    except CoinGeckoError as exc:
-        return str(exc)
-
-    coins = fetched.data.get("coins", [])
-    if not coins:
-        return f"No coins matched '{query}'."
-
-    lines = [f"{c['name']} ({c['symbol'].upper()}) -> id: {c['id']}" for c in coins[:8]]
-    return "Matches:\n" + "\n".join(lines)
 
 
 @mcp.tool()
@@ -130,8 +114,8 @@ async def compare_coins(
         return "The `days` argument must be between 2 and 365."
 
     try:
-        chart_a = await coingecko.market_chart(coin_a, days, currency)
-        chart_b = await coingecko.market_chart(coin_b, days, currency)
+        chart_a = await client.market_chart(coin_a, days, currency)
+        chart_b = await client.market_chart(coin_b, days, currency)
     except CoinGeckoError as exc:
         return str(exc)
 
@@ -168,6 +152,28 @@ async def compare_coins(
 
     note = chart_a.staleness_note() or chart_b.staleness_note()
     return f"{output}\n\n{note}" if note else output
+
+
+@mcp.tool()
+async def search_coin(query: str) -> str:
+    """Find a cryptocurrency's CoinGecko id by name or ticker symbol.
+
+    Use this when unsure of the exact id another tool needs.
+
+    Args:
+        query: Partial name or ticker, e.g. "btc", "doge", "chainlink".
+    """
+    try:
+        fetched = await client.search(query)
+    except CoinGeckoError as exc:
+        return str(exc)
+
+    coins = fetched.data.get("coins", [])
+    if not coins:
+        return f"No coins matched '{query}'."
+
+    lines = [f"{c['name']} ({c['symbol'].upper()}) -> id: {c['id']}" for c in coins[:8]]
+    return "Matches:\n" + "\n".join(lines)
 
 
 if __name__ == "__main__":

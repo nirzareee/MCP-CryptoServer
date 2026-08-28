@@ -11,7 +11,8 @@ built from wrong data looks exactly like a tool that works.
 
 FastMCP's `@mcp.tool()` decorator registers the function and returns it
 unchanged, so the tools can be awaited directly here. Mocking stays at the
-HTTP transport, so the real fetch, parse, compute, and format path runs.
+HTTP transport, so the real fetch, parse, compute, and format path runs, and
+each test gets its own client so no global state needs resetting.
 """
 
 from collections.abc import Generator
@@ -21,7 +22,9 @@ import httpx
 import pytest
 import respx
 
-import coingecko
+import mcp_server
+from cache import TTLCache
+from coingecko import BASE_URL, CoinGeckoClient
 from mcp_server import (
     compare_coins,
     get_crypto_price,
@@ -29,29 +32,48 @@ from mcp_server import (
     search_coin,
 )
 
-PRICE_URL = f"{coingecko.BASE_URL}/simple/price"
-SEARCH_URL = f"{coingecko.BASE_URL}/search"
+PRICE_URL = f"{BASE_URL}/simple/price"
+SEARCH_URL = f"{BASE_URL}/search"
 
 DAY_MS = 86_400_000
 JAN_1_2024_MS = 1_704_067_200_000
 
 
+class FakeClock:
+    """A clock the test controls."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
 @pytest.fixture(autouse=True)
-def clear_cache() -> Generator[None, None, None]:
-    coingecko._cache.clear()
-    yield
-    coingecko._cache.clear()
+def fresh_client() -> Generator[FakeClock, None, None]:
+    """Give each test its own client, with a clock it can advance.
+
+    `mcp_server` creates one client at import time, which is right for the
+    running server and wrong for tests. Swapping in a per-test instance keeps
+    cases isolated without clearing global state.
+    """
+    clock = FakeClock()
+    original = mcp_server.client
+    mcp_server.client = CoinGeckoClient(cache=TTLCache(60.0, clock=clock))
+    yield clock
+    mcp_server.client = original
 
 
 def chart_url(coin_id: str) -> str:
-    return f"{coingecko.BASE_URL}/coins/{coin_id}/market_chart"
+    return f"{BASE_URL}/coins/{coin_id}/market_chart"
 
 
 def chart(*prices: float) -> dict[str, Any]:
     """Build a market_chart body with one daily observation per price."""
-    return {
-        "prices": [[JAN_1_2024_MS + i * DAY_MS, p] for i, p in enumerate(prices)]
-    }
+    return {"prices": [[JAN_1_2024_MS + i * DAY_MS, p] for i, p in enumerate(prices)]}
 
 
 class TestGetCryptoPrice:
@@ -118,11 +140,13 @@ class TestGetCryptoPrice:
 
 class TestStalenessSurfacing:
     @respx.mock
-    async def test_stale_fallback_is_labelled_with_its_age(self) -> None:
+    async def test_stale_fallback_is_labelled_with_its_age(
+        self, fresh_client: FakeClock
+    ) -> None:
         """Stale prices presented as current would be the worst failure here.
 
-        The cached entry is aged past the TTL by hand, the live fetch is made
-        to fail, and the tool must both serve the old figure and say it is old.
+        Time is advanced past the TTL, the live fetch is made to fail, and the
+        tool must both serve the old figure and say how old it is.
         """
         route = respx.get(PRICE_URL)
         route.mock(
@@ -130,18 +154,12 @@ class TestStalenessSurfacing:
         )
         await get_crypto_price("bitcoin")
 
-        # Backdate the stored entry by five minutes.
-        key = next(iter(coingecko._cache._entries))
-        entry = coingecko._cache._entries[key]
-        coingecko._cache._entries[key] = type(entry)(
-            value=entry.value, stored_at=entry.stored_at - 300
-        )
-
+        fresh_client.advance(300.0)
         route.mock(return_value=httpx.Response(503))
-        result = await get_crypto_price("bitcoin", refresh=True)
+        result = await get_crypto_price("bitcoin")
 
         assert "50,000.00" in result
-        assert "minutes old" in result
+        assert "5.0 minutes old" in result
 
 
 class TestGetPortfolio:
@@ -231,9 +249,7 @@ class TestSearchCoin:
 
     @respx.mock
     async def test_no_matches(self) -> None:
-        respx.get(SEARCH_URL).mock(
-            return_value=httpx.Response(200, json={"coins": []})
-        )
+        respx.get(SEARCH_URL).mock(return_value=httpx.Response(200, json={"coins": []}))
 
         assert "zzzz" in await search_coin("zzzz")
 
@@ -257,9 +273,7 @@ class TestCompareCoins:
             )
         )
         respx.get(chart_url("ethereum")).mock(
-            return_value=httpx.Response(
-                200, json=chart(10.0, 11.0, 12.1, 13.31, 14.64)
-            )
+            return_value=httpx.Response(200, json=chart(10.0, 11.0, 12.1, 13.31, 14.64))
         )
 
         result = await compare_coins("bitcoin", "ethereum", days=5)
